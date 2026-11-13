@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - "webview-client-source.zip.b64"
+      - "web-index.html.gz.b64"
       - ".github/workflows/build-webview-apk.yml"
 
 permissions:
@@ -28,16 +28,18 @@ jobs:
         with:
           gradle-version: "8.7"
 
-      - name: Extract original Android WebView client
+      - name: Prepare original WebView Android app
+        shell: bash
         run: |
-          base64 -d webview-client-source.zip.b64 > /tmp/webview-client.zip
-          mkdir -p webview-client
-          unzip -q /tmp/webview-client.zip -d webview-client
+          set -euo pipefail
+          mkdir -p webview-client/android/app/src/main/java/com/securechat/app
+          mkdir -p webview-client/android/app/src/main/assets
+          base64 -d web-index.html.gz.b64 | gzip -d > webview-client/android/app/src/main/assets/index.html
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("webview-client/web/index.html")
+          p = Path("webview-client/android/app/src/main/assets/index.html")
           s = p.read_text(encoding="utf-8")
-          old = '<script src="nacl.min.js"></script>\n<script src="scrypt.js"></script>'
+          old = '<script src="nacl.min.js"></script>\\n<script src="scrypt.js"></script>'
           new = '''<script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js"></script>
           <script src="https://cdn.jsdelivr.net/npm/scrypt-async@2.0.1/scrypt-async.js"></script>
           <script>
@@ -51,9 +53,92 @@ jobs:
           };
           </script>'''
           if old not in s:
-              raise SystemExit("Expected crypto script references were not found")
+              raise SystemExit("Original crypto script references were not found")
           p.write_text(s.replace(old, new), encoding="utf-8")
           PY
+          cat > webview-client/android/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "SecureChatWebView"
+          include(":app")
+          EOF
+          cat > webview-client/android/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF
+          cat > webview-client/android/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.securechat.app'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.securechat.webview'
+                  minSdk 23
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0-webview'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+          cat > webview-client/android/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application
+                  android:label="SecureChat WebView"
+                  android:theme="@android:style/Theme.Material.NoActionBar"
+                  android:usesCleartextTraffic="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > webview-client/android/app/src/main/java/com/securechat/app/MainActivity.java <<'EOF'
+          package com.securechat.app;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          public class MainActivity extends Activity {
+              private WebView web;
+              @Override public void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  web = new WebView(this);
+                  web.setBackgroundColor(0xFF0C0C0C);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setDatabaseEnabled(true);
+                  s.setAllowFileAccess(true);
+                  s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+                  web.setWebViewClient(new WebViewClient());
+                  setContentView(web);
+                  web.loadUrl("file:///android_asset/index.html");
+              }
+              @Override public void onBackPressed() {
+                  if (web != null && web.canGoBack()) web.goBack();
+                  else super.onBackPressed();
+              }
+          }
+          EOF
 
       - name: Build WebView APK
         working-directory: webview-client/android
