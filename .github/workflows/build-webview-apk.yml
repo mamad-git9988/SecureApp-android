@@ -39,7 +39,7 @@ jobs:
           from pathlib import Path
           p = Path("webview-client/android/app/src/main/assets/index.html")
           s = p.read_text(encoding="utf-8")
-          old = '<script src="nacl.min.js"></script>\\n<script src="scrypt.js"></script>'
+          old = '<script src="nacl.min.js"></script>' + chr(10) + '<script src="scrypt.js"></script>'
           new = '''<script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl-fast.min.js"></script>
           <script src="https://cdn.jsdelivr.net/npm/scrypt-async@2.0.1/scrypt-async.js"></script>
           <script>
